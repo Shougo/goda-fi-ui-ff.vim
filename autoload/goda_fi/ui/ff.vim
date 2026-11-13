@@ -87,7 +87,7 @@ function! s:redraw(name, r) abort
   if a:r.open
     let st.closed = 0
     if a:r.prevWinid > 0 && a:r.prevWinid != winid
-      let st.prev_winid = a:r.prevWinid
+      let st.prev_winid = s:prev_window(a:name, a:r.prevWinid)
     endif
     if winid < 0
       let winid = s:open_window(a:name, bufnr, a:r.params)
@@ -169,6 +169,46 @@ function! s:redraw(name, r) abort
   redraw
   " The item under the cursor may be another one.
   call s:auto_action(a:name, 0)
+endfunction
+
+" The window the actions of the session name go to, for a start from winid.
+" Not the window of another ff UI (a start from it): the actions would go
+" there, and it would stay. That of its start instead; and a float of it
+" (that would cover them) is closed, as its session quit.
+function! s:prev_window(name, winid) abort
+  let winid = a:winid
+  let seen = {}
+  while !has_key(seen, winid)
+    let seen[winid] = 1
+    let other = s:ui_of_window(winid)
+    if other ==# '' || other ==# a:name
+      break
+    endif
+    let ost = s:st(other)
+    if has('nvim') && nvim_win_get_config(winid).relative !=# ''
+      call s:close_preview(ost)
+      call nvim_win_close(winid, v:true)
+    endif
+    if ost.prev_winid <= 0 || win_id2win(ost.prev_winid) <= 0
+      return win_id2win(winid) > 0 ? winid : 0
+    endif
+    let winid = ost.prev_winid
+  endwhile
+  return winid
+endfunction
+
+" The session of the ff UI shown in the window winid ('' if none).
+function! s:ui_of_window(winid) abort
+  let bufnr = winbufnr(a:winid)
+  if bufnr <= 0
+    return ''
+  endif
+  for [name, st] in items(s:state)
+    if st.bufnr == bufnr && !st.closed
+      return name
+    endif
+  endfor
+  return ''
 endfunction
 
 function! s:escape(s) abort

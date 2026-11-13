@@ -21,6 +21,11 @@ UI FF                                                          *goda-fi-ui-ff*
 ui/ff, as ddu-ui-ff: the items in a buffer ("goda-fi-ff-{name}", filetype
 "goda-fi-ff") of a split window, filtered from the command line.
 
+The item actions go to the window the session was started from. A session
+started from the window of another (from its buffer: a mapping pressed
+twice, say) uses the window that one was started from instead; the
+floating window of the other closes (it would cover it).
+
 PARAMS                                                  *goda-fi-ui-ff-params*
 
 Sizes and places are numbers or expressions of Vim, where uiParams are the
