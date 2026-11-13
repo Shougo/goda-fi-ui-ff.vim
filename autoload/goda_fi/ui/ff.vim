@@ -87,7 +87,7 @@ function! s:redraw(name, r) abort
   if a:r.open
     let st.closed = 0
     if a:r.prevWinid > 0 && a:r.prevWinid != winid
-      let st.prev_winid = s:prev_window(a:name, a:r.prevWinid)
+      let st.prev_winid = s:prev_window(a:name, a:r.prevWinid, s:split(a:r.params))
     endif
     if winid < 0
       let winid = s:open_window(a:name, bufnr, a:r.params)
@@ -172,12 +172,15 @@ function! s:redraw(name, r) abort
 endfunction
 
 " The window the actions of the session name go to, for a start from winid.
-" Not the window of another ff UI (a start from it): the actions would go
-" there, and it would stay. That of its start instead; and a float of it
-" (that would cover them) is closed, as its session quit.
-function! s:prev_window(name, winid) abort
+" Not the window of another UI of ff (a start from it: the filer too): the
+" actions would go there, and it would stay. That of its start instead; and
+" a float of it (that would cover them) is closed, as its session quit, the
+" window opening from that one. With split "no", the window of a split UI
+" stays: it takes its place.
+function! s:prev_window(name, winid, split) abort
   let winid = a:winid
   let seen = {}
+  let closed = 0
   while !has_key(seen, winid)
     let seen[winid] = 1
     let other = s:ui_of_window(winid)
@@ -188,12 +191,18 @@ function! s:prev_window(name, winid) abort
     if has('nvim') && nvim_win_get_config(winid).relative !=# ''
       call s:close_preview(ost)
       call nvim_win_close(winid, v:true)
+      let closed = 1
+    elseif a:split ==# 'no'
+      break
     endif
     if ost.prev_winid <= 0 || win_id2win(ost.prev_winid) <= 0
       return win_id2win(winid) > 0 ? winid : 0
     endif
     let winid = ost.prev_winid
   endwhile
+  if closed
+    call win_gotoid(winid)
+  endif
   return winid
 endfunction
 
