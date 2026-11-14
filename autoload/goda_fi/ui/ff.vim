@@ -29,6 +29,10 @@ function! s:st(name) abort
           \ 'preview_winid': -1,
           \ 'preview_bufnr': -1,
           \ 'preview_id': 0,
+          \ 'image_id': -1,
+          \ 'image_path': '',
+          \ 'image_zindex': 0,
+          \ 'image_area': [],
           \ 'sent': v:null,
           \ 'keep_row': 0,
           \ 'auto_enabled': v:false,
@@ -704,6 +708,7 @@ function! s:close_preview(st) abort
   endif
   let a:st.preview_winid = -1
   let a:st.preview_id = 0
+  call s:clear_image(a:st)
 endfunction
 
 function! s:preview_buffer(name) abort
@@ -731,7 +736,9 @@ function! goda_fi#ui#ff#_preview(name, id, pv, p) abort
   if a:p.previewSplit ==# 'no' || ffwin < 0
     return
   endif
-  let [lines, path] = s:preview_lines(a:pv, a:p)
+  " An image (imageExts): over the preview window, which is empty.
+  let image = s:image_path(a:pv, a:p)
+  let [lines, path] = image !=# '' ? [[], ''] : s:preview_lines(a:pv, a:p)
   let bufnr = s:preview_buffer(a:name)
   call setbufvar(bufnr, '&modifiable', 1)
   silent call deletebufline(bufnr, 1, '$')
@@ -788,6 +795,163 @@ function! goda_fi#ui#ff#_preview(name, id, pv, p) abort
     call call(a:p.onPreview, [{'previewWinId': winid, 'lineNr': lnum}])
   endif
   redraw
+  if image !=# ''
+    call s:show_image(st, image, get(a:p, 'previewFloatingZindex', 100) + 1)
+  else
+    call s:clear_image(st)
+  endif
+endfunction
+
+" The image to preview (p.imagePath: an extension of imageExts), when
+" images can be shown; '' if not (the previewer pv instead).
+function! s:image_path(pv, p) abort
+  let path = get(a:p, 'imagePath', '')
+  if path ==# '' || !filereadable(path) || !s:image_supported()
+    return ''
+  endif
+  return path
+endfunction
+
+" Neovim: vim.ui.img (Neovim 0.13, or a replacement of it); Vim: a popup
+" of an image, from what ImageMagick gives.
+function! s:image_supported() abort
+  if has('nvim')
+    return luaeval('type(vim.ui) == "table" and type(vim.ui.img) == "table"')
+  endif
+  return has('patch-9.2.0612') && has('image')
+        \ && executable('convert') && executable('identify')
+endfunction
+
+" Shows the image path over the preview window of st.
+function! s:show_image(st, path, zindex) abort
+  call s:clear_image(a:st)
+  let a:st.image_path = a:path
+  let a:st.image_zindex = a:zindex
+  call s:place_image(a:st)
+  augroup goda-fi-ff-image
+    autocmd!
+    " An image is where it was put on the screen, not in a window: it goes
+    " with the window when that moves (scrolled, resized, ...).
+    autocmd WinScrolled,WinResized,VimResized,TabEnter * call s:place_images()
+  augroup END
+endfunction
+
+" The text area of the preview window of st on the screen: [row, col,
+" width, height] (1-based), or [] when it is not shown.
+function! s:image_area(st) abort
+  let winid = a:st.preview_winid
+  if !s:preview_valid(winid)
+    return []
+  endif
+  if !has('nvim') && win_id2win(winid) <= 0
+    let pos = popup_getpos(winid)
+    return empty(pos) || !pos.visible ? []
+          \ : [pos.core_line, pos.core_col, pos.core_width, pos.core_height]
+  endif
+  let [row, col] = win_screenpos(winid)
+  if row <= 0 || win_id2tabwin(winid)[0] != tabpagenr()
+    " (In another tab page.)
+    return []
+  endif
+  if has('nvim')
+    " (win_screenpos() is that of its border.)
+    let border = get(nvim_win_get_config(winid), 'border', [])
+    if type(border) == v:t_list && !empty(border) && border != repeat([''], len(border))
+      let [row, col] = [row + 1, col + 1]
+    endif
+  endif
+  return [row, col, winwidth(winid), winheight(winid)]
+endfunction
+
+" Puts the image of st where its preview window is now (or hides it).
+function! s:place_image(st) abort
+  let area = s:image_area(a:st)
+  if empty(area)
+    call s:delete_image(a:st)
+    return
+  endif
+  if a:st.image_id > 0 && area == a:st.image_area
+    " (Where it is: nothing sent to the terminal.)
+    return
+  endif
+  let a:st.image_area = area
+  let [row, col, width, height] = area
+  if has('nvim')
+    let opts = {'row': row, 'col': col, 'width': width, 'height': height,
+          \ 'zindex': a:st.image_zindex}
+    try
+      if a:st.image_id > 0
+        call luaeval('vim.ui.img.set(_A[1], _A[2])', [a:st.image_id, opts])
+      else
+        let a:st.image_id = luaeval(
+              \ 'vim.ui.img.set(vim.fn.readblob(_A[1]), _A[2])',
+              \ [a:st.image_path, opts])
+      endif
+    catch
+      call goda_fi#util#print_error(v:exception)
+      call s:clear_image(a:st)
+    endtry
+    return
+  endif
+  if a:st.image_id > 0
+    call popup_move(a:st.image_id, {'line': row, 'col': col})
+    return
+  endif
+  " (Not again when it failed: s:place_images() would.)
+  let path = shellescape(a:st.image_path)
+  let out = systemlist('identify -format "%w %h" ' . path)
+  let dim = split(get(out, 0, ''))
+  if v:shell_error != 0 || len(dim) < 2
+    call goda_fi#util#print_error(join(out, "\n"))
+    call s:clear_image(a:st)
+    return
+  endif
+  let rgb = tempname()
+  let out = systemlist(printf('convert %s -depth 8 rgb:%s', path, shellescape(rgb)))
+  if v:shell_error != 0
+    call goda_fi#util#print_error(join(out, "\n"))
+    call s:clear_image(a:st)
+    return
+  endif
+  let a:st.image_id = popup_create('', {
+        \ 'image': {'data': readblob(rgb), 'width': str2nr(dim[0]),
+        \   'height': str2nr(dim[1])},
+        \ 'line': row, 'col': col, 'padding': [0, 0, 0, 0],
+        \ 'zindex': a:st.image_zindex})
+  call delete(rgb)
+endfunction
+
+" The images of the sessions go with their preview windows.
+function! s:place_images() abort
+  let shown = 0
+  for st in values(s:state)
+    if st.image_path !=# ''
+      call s:place_image(st)
+      let shown = 1
+    endif
+  endfor
+  if !shown
+    autocmd! goda-fi-ff-image
+  endif
+endfunction
+
+" Hides the image of st (it comes back with s:place_image()).
+function! s:delete_image(st) abort
+  if a:st.image_id <= 0
+    return
+  endif
+  if has('nvim')
+    call luaeval('vim.ui.img.del(_A)', a:st.image_id)
+  else
+    call popup_close(a:st.image_id)
+  endif
+  let a:st.image_id = -1
+endfunction
+
+" Removes the image of st.
+function! s:clear_image(st) abort
+  call s:delete_image(a:st)
+  let a:st.image_path = ''
 endfunction
 
 function! s:open_preview_split(ffwin, bufnr, p) abort

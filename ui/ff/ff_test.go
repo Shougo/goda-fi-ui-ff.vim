@@ -134,3 +134,26 @@ func TestSourcePrefix(t *testing.T) {
 		t.Errorf("no %q", got)
 	}
 }
+
+func TestImagePath(t *testing.T) {
+	item := func(action any) fi.Item { return fi.Item{Action: action} }
+	for _, c := range []struct {
+		item fi.Item
+		exts []string
+		want string
+	}{
+		{item(map[string]any{"path": "/a/b.PNG"}), []string{".png"}, "/a/b.PNG"},
+		{item(map[string]any{"path": "/a/b.jpg"}), []string{"JPG", ".png"}, "/a/b.jpg"},
+		{item(struct {
+			Path string `json:"path"`
+		}{"x.png"}), []string{".png"}, "x.png"},
+		{item(map[string]any{"path": "/a/b.txt"}), []string{".png"}, ""},
+		{item(map[string]any{"path": "/a/b.png"}), nil, ""},
+		{item(map[string]any{"word": "b.png"}), []string{".png"}, ""},
+		{item(nil), []string{".png"}, ""},
+	} {
+		if got := imagePath(c.item, c.exts); got != c.want {
+			t.Errorf("imagePath(%v, %q) = %q, want %q", c.item.Action, c.exts, got, c.want)
+		}
+	}
+}

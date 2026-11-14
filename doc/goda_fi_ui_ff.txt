@@ -149,7 +149,14 @@ toggleAutoAction	Enables autoAction, or disables it (and closes the
 
 preview			Shows the item under the cursor in the preview
 			window (params.toggle: closes it when it shows that
-			item).
+			item).  params.imageExts: the extensions (".png") of
+			the files shown as images, over the preview window
+			(the path of the action of the item).  Neovim 0.13
+			(|vim.ui.img|: a terminal of the Kitty graphics
+			protocol), or Vim 9.2.0612 (+image) with ImageMagick
+			("convert" and "identify"); else the preview of the
+			kind.  The image follows the window when it moves.
+			The other params are the kind's.
 
 redraw			Gathers again; {method: "uiRedraw"} draws again.
 
@@ -164,8 +171,8 @@ expandItem		Expands the tree under the cursor (a directory of
 collapseItem		Collapses the tree under the cursor, or the one it
 			is in; the cursor goes to it.
 
-togglePreview		preview with params.toggle (the params of the kind,
-			imageExts say, go on).
+togglePreview		preview with params.toggle (imageExts and the params
+			of the kind go on).
 
 updateOptions		Merges params into the options of the session (as
 			ddu.vim's); the action redraw gathers or draws with

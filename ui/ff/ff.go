@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -504,6 +505,31 @@ func (u *UI) Actions() map[string]fi.UIAction {
 	}
 }
 
+// imagePath is the path of item (that of its action) when its extension
+// is one of exts (".png", or "png"; case ignored): the preview shows that
+// image (when the editor can). "" if not.
+func imagePath(item fi.Item, exts []string) string {
+	if len(exts) == 0 {
+		return ""
+	}
+	var act struct {
+		Path string `json:"path"`
+	}
+	if sdk.Decode(item.Action, &act) != nil || act.Path == "" {
+		return ""
+	}
+	ext := strings.ToLower(filepath.Ext(act.Path))
+	for _, e := range exts {
+		if e = strings.ToLower(e); !strings.HasPrefix(e, ".") {
+			e = "." + e
+		}
+		if e == ext {
+			return act.Path
+		}
+	}
+	return ""
+}
+
 // togglePreview is preview with params.toggle.
 func (u *UI) togglePreview(ctx context.Context, h sdk.Host, a fi.UIActionArgs) (fi.ActionFlags, error) {
 	p := fi.Params{}
@@ -676,6 +702,9 @@ func (u *UI) preview(ctx context.Context, h sdk.Host, a fi.UIActionArgs) (fi.Act
 	// The other params are the kind's (previewCmds, ...).
 	var p struct {
 		Toggle bool `json:"toggle"`
+		// ImageExts: the files with these extensions (".png") are
+		// shown as images.
+		ImageExts []string `json:"imageExts"`
 	}
 	if err := sdk.Decode(a.ActionParams, &p); err != nil {
 		return fi.None, err
@@ -698,8 +727,9 @@ func (u *UI) preview(ctx context.Context, h sdk.Host, a fi.UIActionArgs) (fi.Act
 		return fi.None, err
 	}
 	_, err = h.Call(ctx, "goda_fi#ui#ff#_preview", name, a.Item.ID(), pv, vimParams(up, map[string]any{
-		"toggle":  p.Toggle,
-		"maxSize": up.PreviewMaxSize,
+		"toggle":    p.Toggle,
+		"maxSize":   up.PreviewMaxSize,
+		"imagePath": imagePath(*a.Item, p.ImageExts),
 	}))
 	return fi.None, err
 }
