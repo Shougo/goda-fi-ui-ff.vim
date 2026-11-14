@@ -155,8 +155,14 @@ preview			Shows the item under the cursor in the preview
 			(|vim.ui.img|: a terminal of the Kitty graphics
 			protocol), or Vim 9.2.0612 (+image) with ImageMagick
 			("convert" and "identify"); else the preview of the
-			kind.  The image follows the window when it moves.
-			The other params are the kind's.
+			kind.  Neovim shows PNG files (what |vim.ui.img|
+			shows); the others have the preview of the kind.
+			The image is as large as it is, or smaller to fit
+			in the window, never stretched: the size of a cell
+			in pixels is what the terminal says (getcellpixels()
+			in Vim, the size of the window of the terminal in
+			Neovim), or 10x20.  It follows the window when it
+			moves.  The other params are the kind's.
 
 redraw			Gathers again; {method: "uiRedraw"} draws again.
 

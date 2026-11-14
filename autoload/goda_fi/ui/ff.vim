@@ -33,6 +33,8 @@ function! s:st(name) abort
           \ 'image_path': '',
           \ 'image_zindex': 0,
           \ 'image_area': [],
+          \ 'image_size': [],
+          \ 'image_fit': v:null,
           \ 'sent': v:null,
           \ 'keep_row': 0,
           \ 'auto_enabled': v:false,
@@ -807,6 +809,7 @@ endfunction
 function! s:image_path(pv, p) abort
   let path = get(a:p, 'imagePath', '')
   if path ==# '' || !filereadable(path) || !s:image_supported()
+        \ || empty(s:image_size(path))
     return ''
   endif
   return path
@@ -822,10 +825,78 @@ function! s:image_supported() abort
         \ && executable('convert') && executable('identify')
 endfunction
 
+" The size of the image path in pixels: [width, height], or [] when it is
+" not one that can be shown. vim.ui.img shows PNG (its header says it);
+" ImageMagick reads the others.
+function! s:image_size(path) abort
+  if has('nvim')
+    let head = readblob(a:path, 0, 24)
+    if len(head) < 24 || head[1 : 3] != 0z504E47
+      return []
+    endif
+    let Int = {i -> ((head[i] * 256 + head[i + 1]) * 256 + head[i + 2]) * 256 + head[i + 3]}
+    let size = [Int(16), Int(20)]
+  else
+    let out = systemlist('identify -format "%w %h" ' . shellescape(a:path . '[0]'))
+    let size = v:shell_error != 0 ? [] : map(split(get(out, 0, '')), 'str2nr(v:val)')
+  endif
+  return len(size) == 2 && size[0] > 0 && size[1] > 0 ? size : []
+endfunction
+
+" The size of a cell in pixels: [width, height]. Vim: getcellpixels();
+" Neovim: what the terminal says (lua/goda_fi/ui/ff/cell.lua). Asked every
+" time (a font may change). When they do not know: 10x20 (the ratio of
+" most fonts).
+let s:cell = []
+function! s:cell_pixels() abort
+  if !empty(s:cell)
+    return s:cell
+  endif
+  let cell = exists('*getcellpixels') ? getcellpixels()
+        \ : has('nvim') ? luaeval('require("goda_fi.ui.ff.cell").pixels()')
+        \ : v:null
+  return type(cell) == v:t_list && len(cell) == 2 && cell[0] > 0 && cell[1] > 0
+        \ ? cell : [10, 20]
+endfunction
+
+" The size of a cell in pixels as {width} and {height} (0: as the
+" terminal says): for a test.
+function! goda_fi#ui#ff#_cell_pixels(width, height) abort
+  let s:cell = a:width > 0 && a:height > 0 ? [a:width, a:height] : []
+  call s:place_images()
+endfunction
+
+" The size of the image of st in the area [row, col, width, height] of
+" cells: as large as it is, or smaller to fit in, never stretched.
+" Neovim: {'width': cells} or {'height': cells} (the terminal keeps the
+" ratio of the other), {} as it is; Vim: [width, height] in pixels.
+function! s:image_fit(st, area) abort
+  let [cw, ch] = s:cell_pixels()
+  let [iw, ih] = a:st.image_size
+  let [aw, ah] = [a:area[2] * cw, a:area[3] * ch]
+  " (min() is not of Floats.)
+  let scale = 1.0
+  for f in [aw * 1.0 / iw, ah * 1.0 / ih]
+    let scale = f < scale ? f : scale
+  endfor
+  if !has('nvim')
+    return [max([1, float2nr(iw * scale)]), max([1, float2nr(ih * scale)])]
+  endif
+  if scale >= 1.0
+    " (As large as it is: the terminal places its pixels.)
+    return {}
+  endif
+  " The side that limits it, in cells (not rounded up: out of the window).
+  return aw * ih <= ah * iw
+        \ ? {'width': max([1, float2nr(iw * scale / cw)])}
+        \ : {'height': max([1, float2nr(ih * scale / ch)])}
+endfunction
+
 " Shows the image path over the preview window of st.
 function! s:show_image(st, path, zindex) abort
   call s:clear_image(a:st)
   let a:st.image_path = a:path
+  let a:st.image_size = s:image_size(a:path)
   let a:st.image_zindex = a:zindex
   call s:place_image(a:st)
   augroup goda-fi-ff-image
@@ -863,22 +934,30 @@ function! s:image_area(st) abort
   return [row, col, winwidth(winid), winheight(winid)]
 endfunction
 
-" Puts the image of st where its preview window is now (or hides it).
+" Puts the image of st where its preview window is now, the size fitting
+" in it (or hides it).
 function! s:place_image(st) abort
   let area = s:image_area(a:st)
   if empty(area)
     call s:delete_image(a:st)
     return
   endif
-  if a:st.image_id > 0 && area == a:st.image_area
+  let fit = s:image_fit(a:st, area)
+  if a:st.image_id > 0 && area == a:st.image_area && fit == a:st.image_fit
     " (Where it is: nothing sent to the terminal.)
     return
   endif
+  if a:st.image_id > 0 && (has('nvim') ? keys(fit) != keys(a:st.image_fit)
+        \ : fit != a:st.image_fit)
+    " (Another side limits it: the size given is not that one. Vim: the
+    " image is another.)
+    call s:delete_image(a:st)
+  endif
   let a:st.image_area = area
-  let [row, col, width, height] = area
+  let a:st.image_fit = fit
+  let [row, col] = area[: 1]
   if has('nvim')
-    let opts = {'row': row, 'col': col, 'width': width, 'height': height,
-          \ 'zindex': a:st.image_zindex}
+    let opts = extend({'row': row, 'col': col, 'zindex': a:st.image_zindex}, fit)
     try
       if a:st.image_id > 0
         call luaeval('vim.ui.img.set(_A[1], _A[2])', [a:st.image_id, opts])
@@ -898,24 +977,16 @@ function! s:place_image(st) abort
     return
   endif
   " (Not again when it failed: s:place_images() would.)
-  let path = shellescape(a:st.image_path)
-  let out = systemlist('identify -format "%w %h" ' . path)
-  let dim = split(get(out, 0, ''))
-  if v:shell_error != 0 || len(dim) < 2
-    call goda_fi#util#print_error(join(out, "\n"))
-    call s:clear_image(a:st)
-    return
-  endif
   let rgb = tempname()
-  let out = systemlist(printf('convert %s -depth 8 rgb:%s', path, shellescape(rgb)))
+  let out = systemlist(printf('convert %s -resize %dx%d! -depth 8 rgb:%s',
+        \ shellescape(a:st.image_path . '[0]'), fit[0], fit[1], shellescape(rgb)))
   if v:shell_error != 0
     call goda_fi#util#print_error(join(out, "\n"))
     call s:clear_image(a:st)
     return
   endif
   let a:st.image_id = popup_create('', {
-        \ 'image': {'data': readblob(rgb), 'width': str2nr(dim[0]),
-        \   'height': str2nr(dim[1])},
+        \ 'image': {'data': readblob(rgb), 'width': fit[0], 'height': fit[1]},
         \ 'line': row, 'col': col, 'padding': [0, 0, 0, 0],
         \ 'zindex': a:st.image_zindex})
   call delete(rgb)
@@ -930,7 +1001,7 @@ function! s:place_images() abort
       let shown = 1
     endif
   endfor
-  if !shown
+  if !shown && exists('#goda-fi-ff-image')
     autocmd! goda-fi-ff-image
   endif
 endfunction
