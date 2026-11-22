@@ -355,21 +355,9 @@ function! s:set_lines(bufnr, lines) abort
   endtry
 endfunction
 
-let s:prop_types = {}
-
+" (Vim only.)
 function! s:prop_type(group, priority) abort
-  let name = 'goda_fi_' . a:group . '_' . a:priority
-  if !has_key(s:prop_types, name)
-    if empty(prop_type_get(name))
-      let opts = {'priority': a:priority, 'override': v:true}
-      if a:group !=# ''
-        let opts.highlight = a:group
-      endif
-      call prop_type_add(name, opts)
-    endif
-    let s:prop_types[name] = 1
-  endif
-  return name
+  return goda_fi#ui#ff#highlight#PropType(a:group, a:priority)
 endfunction
 
 function! s:highlight(bufnr, r) abort
@@ -378,21 +366,15 @@ function! s:highlight(bufnr, r) abort
   else
     call prop_clear(1, max([1, len(a:r.lines)]), {'bufnr': a:bufnr})
   endif
-  for [row, col, length, group, priority] in a:r.highlights
-    let text = get(a:r.lines, row - 1, '')
-    if !hlexists(group) || col > strlen(text)
-      continue
-    endif
-    let length = length <= 0 || col + length - 1 > strlen(text)
-          \ ? strlen(text) - col + 1 : length
+  " (In Lua or Vim9 script: hundreds of them.)
+  if !empty(a:r.highlights)
     if has('nvim')
-      call nvim_buf_set_extmark(a:bufnr, s:ns, row - 1, col - 1, {
-            \ 'end_col': col - 1 + length, 'hl_group': group, 'priority': priority})
+      call luaeval("require('goda_fi.ui.ff.highlight').add(_A[1],_A[2],_A[3],_A[4])",
+            \ [a:bufnr, s:ns, a:r.lines, a:r.highlights])
     else
-      call prop_add(row, col, {'length': length, 'bufnr': a:bufnr,
-            \ 'type': s:prop_type(group, priority)})
+      call goda_fi#ui#ff#highlight#Add(a:bufnr, a:r.lines, a:r.highlights)
     endif
-  endfor
+  endif
   for info in a:r.info
     if has('nvim')
       call nvim_buf_set_extmark(a:bufnr, s:ns, info.row - 1, 0, {
