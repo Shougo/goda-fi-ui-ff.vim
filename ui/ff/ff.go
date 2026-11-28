@@ -10,7 +10,6 @@ package ff
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -130,10 +129,14 @@ func DefaultParams() Params {
 }
 
 // vimParams are the params as Vim sees them (the JSON names), and extra.
+// Their whole numbers stay Numbers (sdk.Generic): goda.vim sends a float64
+// to Vim as a Float, which popup_create() and others refuse for a Number.
 func vimParams(p Params, extra map[string]any) map[string]any {
-	b, _ := json.Marshal(p)
-	m := map[string]any{}
-	_ = json.Unmarshal(b, &m)
+	g, _ := sdk.Generic(p)
+	m, _ := g.(map[string]any)
+	if m == nil {
+		m = map[string]any{}
+	}
 	if m["autoAction"] != nil {
 		aa := m["autoAction"].(map[string]any)
 		if _, ok := aa["delay"]; !ok {

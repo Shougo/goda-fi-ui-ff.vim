@@ -157,3 +157,34 @@ func TestImagePath(t *testing.T) {
 		}
 	}
 }
+
+// The params reach Vim with their whole numbers as Numbers: goda.vim sends a
+// float64 as a Float, which popup_create() refuses (E805).
+func TestVimParamsNumbers(t *testing.T) {
+	p := DefaultParams()
+	p.PreviewWidth = 40
+	p.AutoAction = AutoAction{Name: "preview"}
+	m := vimParams(p, map[string]any{"maxSize": 10})
+	var walk func(path string, v any)
+	walk = func(path string, v any) {
+		switch x := v.(type) {
+		case float64, float32:
+			t.Errorf("%s: %v is a float", path, x)
+		case map[string]any:
+			for k, e := range x {
+				walk(path+"."+k, e)
+			}
+		case []any:
+			for i, e := range x {
+				walk(fmt.Sprintf("%s[%d]", path, i), e)
+			}
+		}
+	}
+	walk("params", m)
+	if n, ok := sdk.Int(m["previewWidth"]); !ok || n != 40 {
+		t.Errorf("previewWidth: %#v", m["previewWidth"])
+	}
+	if aa, _ := m["autoAction"].(map[string]any); aa["delay"] != 100 {
+		t.Errorf("autoAction: %#v", m["autoAction"])
+	}
+}
